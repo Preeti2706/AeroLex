@@ -29,6 +29,7 @@ uvicorn
 
 # Data Validation
 pydantic
+pydantic-settings
 
 # HTTP Requests
 requests
