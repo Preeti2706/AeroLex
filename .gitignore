@@ -1,0 +1,63 @@
+# ============================================
+# AeroLex — .gitignore
+# ============================================
+
+# Virtual Environment — kabhi push mat karna
+aerolex/
+venv/
+env/
+.venv/
+
+# Environment Variables — API keys hote hai yahan, NEVER push
+.env
+.env.local
+.env.*.local
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Logs — generated hote rahe, zaroorat nahi push karne ki
+*.log
+logs/
+
+# MLflow artifacts and runs
+mlruns/
+mlartifacts/
+
+# Database files (SQLite)
+*.db
+*.sqlite
+*.sqlite3
+
+# OS generated files
+.DS_Store           # Mac
+Thumbs.db           # Windows
+desktop.ini
+
+# VS Code settings (optional — tumhari choice)
+.vscode/
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Downloaded data files (will be re-downloaded)
+data/raw/
+data/downloads/
+
+# Docker volumes
+docker_data/
+
+# Testing artifacts
+.pytest_cache/
+.coverage
+htmlcov/
