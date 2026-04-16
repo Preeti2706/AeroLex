@@ -1,0 +1,68 @@
+# ============================================
+# AeroLex — Requirements
+# No version pinning during development
+# Run `pip freeze > requirements_frozen.txt` at project end
+# ============================================
+
+# Environment & Configuration
+python-dotenv
+
+# LLM Providers
+anthropic
+openai
+
+# LangChain Ecosystem
+langchain
+langchain-anthropic
+langchain-openai
+langchain-community
+
+# LangSmith — LLM Observability & Tracing
+langsmith
+
+# MLflow — Experiment Tracking
+mlflow
+
+# API Framework
+fastapi
+uvicorn
+
+# Data Validation
+pydantic
+
+# HTTP Requests
+requests
+
+# Web Scraping
+beautifulsoup4
+playwright
+
+# PDF Parsing
+pdfplumber
+
+# Document Parsing
+unstructured
+
+# XML Parsing
+lxml
+
+# Vector Store
+qdrant-client
+
+# Embeddings
+sentence-transformers
+
+# LangGraph — Agentic Orchestration
+langgraph
+
+# RAG Evaluation
+ragas
+
+# Scheduling
+apscheduler
+
+# UI
+streamlit
+
+# Testing
+pytest
