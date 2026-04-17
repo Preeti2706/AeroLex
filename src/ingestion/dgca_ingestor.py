@@ -21,6 +21,12 @@ Target Sections (most relevant for airline compliance):
 - Section 5: Air Safety
 - Section 7: Flight Crew Standards
 
+PDF URL Discovery (Key Insight):
+- DGCA renders PDF links as <a data-url="dynamicPdf/..."> in nav area
+- Multiple "Part I" exist across series — dict overwrites duplicates
+- Solution: collect PDF URLs as ORDERED LIST, assign positionally
+- PDF links and non-revoked table rows appear in same order on page
+
 Usage:
     from src.ingestion.dgca_ingestor import DGCAIngestor
     ingestor = DGCAIngestor()
@@ -40,13 +46,8 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-# DGCA_BASE_URL   = "https://www.dgca.gov.in/digigov-portal/"
-# DGCA_CAR_URL    = f"{DGCA_BASE_URL}?baseLocale=en_US?dynamicPage=civilAviationRequirements/6/0/viewDynamicRulesReq"
-
 # ── Constants — loaded from settings, not hardcoded ──────────────────────────
-
-DGCA_BASE_URL   = settings.DGCA_BASE_URL
+DGCA_BASE_URL = settings.DGCA_BASE_URL
 
 TARGET_SECTIONS = {
     "2": {"name": "Airworthiness",         "id": settings.DGCA_SECTION_2_ID},
@@ -70,10 +71,10 @@ class DGCAIngestor:
     Phase A — Scrape CAR listing pages (metadata + PDF URLs)
     Phase B — Download PDFs for each CAR
 
-    Why store PDF URLs separately?
-    - PDF download is slow (some CARs are large)
-    - Metadata fetch first = fast inventory
-    - PDFs downloaded on-demand or in background
+    Key design decision — ordered list for PDF matching:
+    - DGCA has duplicate part names ("Part I") across series
+    - Using dict loses duplicates — wrong PDFs get assigned
+    - Ordered list + positional assignment = correct matching
     """
 
     def __init__(self, headless: bool = True):
@@ -93,7 +94,6 @@ class DGCAIngestor:
             "pdfs_downloaded":  0,
             "failed":           0
         }
-        # HTTP session for PDF downloads
         self.http = requests.Session()
         self.http.headers.update({
             "User-Agent": "AeroLex-RAG/1.0 (Aviation Compliance Research)"
@@ -125,11 +125,57 @@ class DGCAIngestor:
     def _compute_hash(self, content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    # ── PDF Link Collection ───────────────────────────────────────────────────
+
+    def _collect_pdf_links_ordered(self, page) -> list[str]:
+        """
+        Collect ALL dynamicPdf links as ORDERED LIST.
+
+        Why ordered list instead of dict?
+        - Multiple "Part I" exist across different series
+        - Dict would overwrite duplicates — wrong URLs assigned
+        - Ordered list preserves exact page order
+        - PDF links and valid (non-revoked) table rows
+          appear in same order on page — positional matching works
+
+        Args:
+            page: Playwright page object
+
+        Returns:
+            list: PDF URLs in page order
+        """
+        pdf_urls = []
+        try:
+            all_pdf_links = page.query_selector_all("a[data-url*='dynamicPdf']")
+            logger.info(f"Found {len(all_pdf_links)} dynamicPdf links on page")
+
+            for link in all_pdf_links:
+                data_url = link.get_attribute("data-url")
+                if data_url:
+                    full_url = (
+                        f"{DGCA_BASE_URL}?baseLocale=en_US?"
+                        f"dynamicPage={data_url}"
+                    )
+                    pdf_urls.append(full_url)
+                    logger.debug(f"PDF URL collected: {data_url[:50]}")
+
+        except Exception as e:
+            logger.warning(f"PDF link collection error: {e}")
+
+        return pdf_urls
+
     # ── Playwright Scraping ───────────────────────────────────────────────────
 
     def _scrape_section(self, section_num: str, section_info: dict) -> list[dict]:
         """
         Scrape one DGCA CAR section using Playwright.
+
+        Steps:
+        1. Navigate to section page
+        2. Wait for JS to render table
+        3. Collect ALL PDF links as ordered list
+        4. Parse table rows — skip revoked, assign PDF positionally
+        5. Return list of CAR records
 
         Args:
             section_num: Section number (e.g., "3")
@@ -156,24 +202,28 @@ class DGCAIngestor:
 
         try:
             with sync_playwright() as p:
-                # Launch browser
                 browser = p.chromium.launch(headless=self.headless)
                 page    = browser.new_page()
 
-                # Navigate to section page
+                # Navigate and wait for full JS render
                 page.goto(section_url, wait_until="networkidle", timeout=30000)
 
-                # Wait for table to load
-                # DGCA uses JavaScript to render table — wait for it
+                # Wait for table
                 try:
                     page.wait_for_selector("table", timeout=15000)
                     logger.info(f"Section {section_num}: Table loaded")
                 except Exception:
-                    logger.warning(f"Section {section_num}: No table found — page may be empty")
+                    logger.warning(f"Section {section_num}: No table found")
                     browser.close()
                     return []
 
-                # Extract all rows from the table
+                # ── Step 1: Collect PDF URLs as ordered list ──────────────
+                # MUST do before iterating rows
+                # PDF links appear in nav area, not inside table rows
+                pdf_urls  = self._collect_pdf_links_ordered(page)
+                pdf_index = 0  # Positional pointer into pdf_urls
+
+                # ── Step 2: Parse table rows ──────────────────────────────
                 rows = page.query_selector_all("table tr")
                 logger.info(f"Section {section_num}: Found {len(rows)} rows")
 
@@ -189,7 +239,7 @@ class DGCAIngestor:
                             current_series = text
                         continue
 
-                    # CAR data row — expect 4-5 columns
+                    # CAR data row — expect 3+ columns
                     if len(cells) < 3:
                         continue
 
@@ -200,29 +250,32 @@ class DGCAIngestor:
                         amendment_no = cells[3].inner_text().strip() if len(cells) > 3 else ""
                         amend_date   = cells[4].inner_text().strip() if len(cells) > 4 else ""
 
-                        # Skip revoked CARs
+                        # Skip revoked CARs — no PDF assigned for these
                         if "REVOKED" in issue_info.upper() or "REVOKED" in subject.upper():
-                            logger.debug(f"Skipping revoked CAR: Section {section_num} {part}")
+                            logger.debug(f"Skipping revoked: Section {section_num} {part}")
                             continue
 
                         # Skip header rows
                         if "CAR SERIES" in part.upper() or "ISSUE NO" in issue_info.upper():
                             continue
 
-                        # Extract PDF link if available
-                        pdf_url = None
-                        pdf_link = row.query_selector("a[href*='dynamicPdf'], a[href*='pdf']")
-                        if pdf_link:
-                            href = pdf_link.get_attribute("href")
-                            if href:
-                                # Build full PDF URL
-                                if href.startswith("http"):
-                                    pdf_url = href
-                                else:
-                                    pdf_url = DGCA_BASE_URL + href.lstrip("/")
-
+                        # Skip empty rows
                         if not subject or not part:
                             continue
+
+                        # ── Step 3: Assign next PDF URL positionally ───────
+                        # Revoked CARs are skipped (no PDF link for them)
+                        # Valid CARs match 1:1 with pdf_urls in order
+                        pdf_url = None
+                        if pdf_index < len(pdf_urls):
+                            pdf_url    = pdf_urls[pdf_index]
+                            pdf_index += 1
+                            logger.debug(
+                                f"PDF assigned [{pdf_index}]: {part} → "
+                                f"{pdf_url[60:100]}..."
+                            )
+                        else:
+                            logger.debug(f"No PDF available for: {part}")
 
                         car_id = f"CAR_S{section_num}_{part.replace(' ', '_')}"
 
@@ -245,7 +298,8 @@ class DGCAIngestor:
                         }
                         cars.append(record)
                         logger.debug(
-                            f"Found CAR: Section {section_num} {part} — {subject[:50]}"
+                            f"Found CAR: Section {section_num} {part} — "
+                            f"{subject[:50]}"
                         )
 
                     except Exception as e:
@@ -261,9 +315,11 @@ class DGCAIngestor:
                 original_error=e
             )
 
+        pdf_count = sum(1 for c in cars if c["pdf_url"])
         logger.info(
             f"Section {section_num} scraped | "
-            f"CARs found: {len(cars)}"
+            f"CARs found: {len(cars)} | "
+            f"PDFs matched: {pdf_count}/{len(cars)}"
         )
         return cars
 
@@ -297,19 +353,17 @@ class DGCAIngestor:
 
         try:
             logger.info(f"Downloading PDF for CAR {car_id}...")
-
-            # DGCA PDFs need browser-like headers
             headers = {
-                "User-Agent":  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer":     DGCA_BASE_URL,
-                "Accept":      "application/pdf,*/*"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer":    DGCA_BASE_URL,
+                "Accept":     "application/pdf,*/*"
             }
             response = self.http.get(pdf_url, headers=headers, timeout=60)
             response.raise_for_status()
 
             # Verify it's actually a PDF
             if b"%PDF" not in response.content[:10]:
-                logger.warning(f"Response is not a PDF for CAR {car_id} — skipping")
+                logger.warning(f"Response is not a PDF for {car_id} — skipping")
                 return False
 
             with open(pdf_path, "wb") as f:
@@ -367,31 +421,32 @@ class DGCAIngestor:
                 self.stats["cars_found"] += len(cars)
 
                 for car in cars:
-                    car_id     = car["car_id"]
-                    content    = json.dumps({
+                    car_id  = car["car_id"]
+                    content = json.dumps({
                         "subject":        car["subject"],
                         "amendment_date": car["amendment_date"],
                         "issue_info":     car["issue_info"]
                     }, sort_keys=True)
-                    new_hash   = self._compute_hash(content)
+                    new_hash = self._compute_hash(content)
 
-                    # Hash check
+                    # Hash check — skip unchanged content
+                    # BUT always update pdf_url in case it was missing before
                     if self.hashes.get(car_id) == new_hash:
+                        # Update PDF URL even for skipped records
+                        if car_id in self.car_index and car.get("pdf_url"):
+                            self.car_index[car_id]["pdf_url"] = car["pdf_url"]
                         self.stats["skipped"] += 1
                         continue
 
-                    # New or changed
                     self.hashes[car_id] = new_hash
                     self.stats["new"]   += 1
 
-                    # Download PDF if requested
                     if download_pdfs and car.get("pdf_url"):
                         self._download_car_pdf(car)
                         time.sleep(1)
 
                     self.car_index[car_id] = car
 
-                # Save after each section
                 self._save_hashes()
                 self._save_car_index()
 
@@ -400,8 +455,7 @@ class DGCAIngestor:
                     f"New: {self.stats['new']} | "
                     f"Skipped: {self.stats['skipped']}"
                 )
-
-                time.sleep(2)  # Be polite between sections
+                time.sleep(2)
 
             except IngestionError as e:
                 handle_exception(
@@ -426,12 +480,18 @@ class DGCAIngestor:
 # ── Module-level test ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("\n--- Testing DGCA CAR Ingestor ---\n")
-    print("⚠️  This will launch a headless browser to scrape dgca.gov.in")
+    print("⚠️  Launching headless browser to scrape dgca.gov.in")
     print("⚠️  Testing Section 3 (Air Transport) only\n")
 
     ingestor = DGCAIngestor(headless=True)
 
-    # Test with Section 3 only — no PDF download
+    # Delete existing index to force fresh run
+    import shutil
+    if CAR_INDEX.exists():
+        CAR_INDEX.unlink()
+    if HASH_FILE.exists():
+        HASH_FILE.unlink()
+
     stats = ingestor.run(sections=["3"], download_pdfs=False)
 
     print(f"\n📊 Ingestion Stats:")
