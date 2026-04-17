@@ -73,6 +73,12 @@ class AeroLexSettings(BaseSettings):
     # ── RAG Config ───────────────────────────────────────────────────────────
     RAG_TOP_K: int                  = Field(default=5)
     RAG_CONFIDENCE_THRESHOLD: float = Field(default=0.85)
+    # ── DGCA Portal Config ───────────────────────────────────────────────────────
+    DGCA_BASE_URL: str          = Field(default="https://www.dgca.gov.in/digigov-portal/")
+    DGCA_SECTION_2_ID: str      = Field(default="209")
+    DGCA_SECTION_3_ID: str      = Field(default="211")
+    DGCA_SECTION_5_ID: str      = Field(default="213")
+    DGCA_SECTION_7_ID: str      = Field(default="215")
 
     # ── Validators ───────────────────────────────────────────────────────────
     @field_validator("APP_ENV")
