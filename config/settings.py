@@ -33,6 +33,7 @@ class AeroLexSettings(BaseSettings):
     # ── LLM API Keys ─────────────────────────────────────────────────────────
     ANTHROPIC_API_KEY: str = Field(..., description="Claude API key")
     OPENAI_API_KEY: str    = Field(..., description="OpenAI API key")
+    VOYAGE_API_KEY: str = Field(..., description="Voyage AI API key")
 
     # ── LangSmith ────────────────────────────────────────────────────────────
     LANGSMITH_API_KEY: str          = Field(..., description="LangSmith API key")
