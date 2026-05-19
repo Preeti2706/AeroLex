@@ -58,6 +58,7 @@ class RetrievedChunk:
     part_number: str
     chunk_id: str
     similarity_score: float
+    source_num: int = 0 
 
 
 @dataclass
@@ -271,7 +272,7 @@ class RAGChain:
             RAGResponse with answer, sources, cost, latency
         """
         start_time = time.time()
-        model_name = "claude-sonnet-4-20250514" if self.use_claude else "gpt-4o-mini"
+        model_name = "claude-sonnet-4-5" if self.use_claude else "gpt-4o-mini"
 
         logger.info(f"RAGChain.run() — query='{query[:80]}...'")
 
@@ -318,14 +319,15 @@ class RAGChain:
 
                 # ── Step 3: Convert to RetrievedChunk objects ──
                 chunks = []
-                for r in raw_results:
+                for i, r in enumerate(raw_results, 1):
                     chunks.append(RetrievedChunk(
                         text=r.get("text", ""),
                         source=r.get("source", "unknown"),
                         doc_type=r.get("doc_type", "unknown"),
                         part_number=r.get("part_number", "unknown"),
                         chunk_id=r.get("chunk_id", "unknown"),
-                        similarity_score=r.get("rerank_score", r.get("rrf_score", 0.0))
+                        similarity_score=r.get("rerank_score", r.get("rrf_score", 0.0)),
+                        source_num=i
                     ))
 
                 logger.info(f"Retrieved {len(chunks)} chunks for RAG context")
