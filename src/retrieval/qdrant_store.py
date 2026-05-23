@@ -222,16 +222,22 @@ class QdrantStore:
     # Build filter if provided
         qdrant_filter = None
         if filters:
-            conditions = []
-            for key, value in filters.items():
-                conditions.append(
-                    FieldCondition(
-                        key=key,
-                        match=MatchValue(value=value)
+            from qdrant_client.models import Filter as QdrantFilter
+            if isinstance(filters, QdrantFilter):
+                # Already a Qdrant Filter object — use directly
+                qdrant_filter = filters
+            elif isinstance(filters, dict):
+                # Legacy dict format — convert to Filter
+                conditions = []
+                for key, value in filters.items():
+                    conditions.append(
+                        FieldCondition(
+                            key=key,
+                            match=MatchValue(value=value)
+                        )
                     )
-                )
-            if conditions:
-                qdrant_filter = Filter(must=conditions)
+                if conditions:
+                    qdrant_filter = Filter(must=conditions)
 
         try:
             from qdrant_client.models import Query
