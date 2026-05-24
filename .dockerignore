@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Virtual environment — NEVER copy venv into Docker
+aerolex/
+venv/
+.venv/
+env/
+
+# Development files
+.git/
+.gitignore
+*.md
+tests/
+notebooks/
+
+# Local data — mounted as volumes in production
+data/
+logs/
+mlruns/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files — use Docker secrets/env vars instead
+.env

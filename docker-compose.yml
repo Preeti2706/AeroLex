@@ -1,0 +1,151 @@
+# TODO: Configure this file
+# ── docker-compose.yml ────────────────────────────────────────────────────
+#
+# WHAT:
+#   Orchestrates the complete AeroLex stack:
+#   - Qdrant vector database
+#   - MLflow tracking server
+#   - AeroLex FastAPI backend
+#   - AeroLex Streamlit frontend
+#
+# WHY docker-compose?
+#   Single command to start/stop entire stack.
+#   Services communicate via internal Docker network —
+#   no manual port configuration needed.
+#
+# USAGE:
+#   Start:   docker-compose up -d
+#   Stop:    docker-compose down
+#   Logs:    docker-compose logs -f aerolex-api
+#   Rebuild: docker-compose up -d --build
+#
+# Official Docs:
+#   https://docs.docker.com/compose/
+# ─────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+# ── Networks ──────────────────────────────────────────────────────────────
+networks:
+  aerolex-net:
+    driver: bridge
+    # Internal network — services talk to each other by name
+    # e.g., http://qdrant:6333 from within the network
+
+# ── Volumes ───────────────────────────────────────────────────────────────
+volumes:
+  qdrant-storage:
+    # Persists Qdrant data across container restarts
+    # Without this, all vectors lost on restart!
+  mlflow-storage:
+    # Persists MLflow experiment data
+
+# ── Services ──────────────────────────────────────────────────────────────
+services:
+
+  # ── Qdrant Vector Database ─────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aerolex-qdrant
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    networks:
+      - aerolex-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── MLflow Tracking Server ─────────────────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    container_name: aerolex-mlflow
+    command: >
+      bash -c "pip install mlflow --quiet &&
+               mlflow server
+               --host 0.0.0.0
+               --port 5000
+               --backend-store-uri /mlflow/storage
+               --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-storage:/mlflow
+    networks:
+      - aerolex-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── AeroLex FastAPI Backend ────────────────────────────────────────────
+  aerolex-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: aerolex-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Override settings for Docker environment
+      - APP_ENV=production
+      - QDRANT_HOST=qdrant          # Use service name, not localhost
+      - QDRANT_PORT=6333
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # API keys from .env file
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    networks:
+      - aerolex-net
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs    # Persist logs outside container
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 90s    # Agent needs time to initialize
+
+  # ── AeroLex Streamlit Frontend ─────────────────────────────────────────
+  aerolex-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: aerolex-ui
+    command: >
+      python -m streamlit run src/ui/streamlit_app.py
+      --server.port 8501
+      --server.address 0.0.0.0
+      --server.headless true
+    ports:
+      - "8501:8501"
+    environment:
+      - APP_ENV=production
+      # Streamlit calls API by container name inside Docker
+      - API_BASE=http://aerolex-api:8000
+    depends_on:
+      aerolex-api:
+        condition: service_healthy
+    networks:
+      - aerolex-net
+    restart: unless-stopped
