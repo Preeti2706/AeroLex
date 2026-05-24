@@ -86,6 +86,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         logger.error(f"Failed to initialize AeroLexAgent: {e}")
         raise RuntimeError(f"Startup failed: {e}")
 
+    # ── STARTUP ──
+    logger.info("AeroLex API starting up — initializing agent...")
+    try:
+        _agent = AeroLexAgent()
+        logger.info("AeroLexAgent initialized successfully — ready for requests")
+        
+        # ← ADD THIS BLOCK HERE:
+        logger.info("Warming up BM25 index...")
+        try:
+            from src.retrieval.hybrid_retriever import HybridRetriever
+            _warmer = HybridRetriever(
+                collection="aerolex_voyage",
+                embedding_model="voyage"
+            )
+            _warmer._build_bm25_index()
+            logger.info("BM25 index warmed up — ready for fast retrieval")
+        except Exception as warmup_err:
+            logger.warning(f"BM25 warmup failed (non-critical): {warmup_err}")
+        # ← END ADD
+
+    except Exception as e:
+        logger.error(f"Failed to initialize AeroLexAgent: {e}")
+        raise RuntimeError(f"Startup failed: {e}")
+
     yield  # ← API is live and serving requests here
 
     # ── SHUTDOWN ──

@@ -41,6 +41,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+# Existing include_router lines ke saath:
+from src.api.routes.query import router as query_router
 
 from src.utils.logger import get_logger
 from src.api.dependencies import lifespan, get_qdrant_status, get_mlflow_status
@@ -162,6 +164,7 @@ API_PREFIX = "/api/v1"
 app.include_router(preflight_router, prefix=API_PREFIX)
 app.include_router(compliance_router, prefix=API_PREFIX)
 app.include_router(ad_router,         prefix=API_PREFIX)
+app.include_router(query_router,      prefix=API_PREFIX)
 
 
 # ── Health Check ──────────────────────────────────────────────────────────
